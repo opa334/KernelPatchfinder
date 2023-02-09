@@ -890,4 +890,22 @@ open class KernelPatchfinder {
             pc = ref + 4
         }
     }
+
+    public lazy var pmap_alloc_page_for_kern: UInt64? = {
+        guard let func_str = cStrSect.addrOf("pmap_alloc_page_for_kern") else {
+            return nil
+        }
+        
+        guard var pc = textExec.findNextXref(to: func_str, optimization: .noBranches) else {
+            return nil
+        }
+        
+        while true {
+            if AArch64Instr.isPacibsp(textExec.instruction(at: pc) ?? 0) {
+                return pc
+            }
+            
+            pc -= 4
+        }
+    }()
 }
