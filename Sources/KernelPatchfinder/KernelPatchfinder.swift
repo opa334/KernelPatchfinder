@@ -518,6 +518,31 @@ open class KernelPatchfinder {
         return kalloc_external
     }()
     
+    /// Address of the `kfree_data_external` function
+    public lazy var kfree_data_external: UInt64? = {
+        // For kfree, find "AMFI: %s: Failed to allocate memory for fatal error message, cannot produce a crash reason."
+        // The second bl after this reference is kfree_data_external
+        guard let amfi_fatal_err_str = cStrSect.addrOf("AMFI: %s: Failed to allocate memory for fatal error message, cannot produce a crash reason.") else {
+            return nil
+        }
+        
+        guard var amfi_fatal_err_func_string_xref = textExec.findNextXref(to: amfi_fatal_err_str, optimization: .noBranches) else {
+            return nil
+        }
+        
+        var kfree_data_external: UInt64!
+        for i in 2..<20 {  // start at 2: right after xref is bl to printf, skip it
+            let pc = amfi_fatal_err_func_string_xref + UInt64(i * 4)
+            let target = AArch64Instr.Emulate.bl(textExec.instruction(at: pc) ?? 0, pc: pc)
+            if target != nil {
+                kfree_data_external = target
+                break
+            }
+        }
+        
+        return kfree_data_external
+    }()
+
     /// Address of the `ml_sign_thread_state` function
     public lazy var ml_sign_thread_state: UInt64? = {
         return textExec.addrOf([0x9AC03021, 0x9262F842, 0x9AC13041, 0x9AC13061, 0x9AC13081, 0x9AC130A1, 0xF9009401, 0xD65F03C0])
