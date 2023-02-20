@@ -543,6 +543,39 @@ open class KernelPatchfinder {
         return kfree_data_external
     }()
 
+    /// Address of the `ptrauth_utils_sign_blob_generic` function
+    public lazy var ptrauth_utils_sign_blob_generic: UInt64? = {
+        // ptrauth_utils_auth_blob_generic references this unique string, the first BL inside it is ptrauth_utils_sign_blob_generic
+        guard let signature_mismatch_str = cStrSect.addrOf("signature mismatch for %lu bytes at %p, calculated %lx vs %lx @%s:%d") else {
+            return nil
+        }
+
+        guard var ptrauth_utils_auth_blob_generic_func = textExec.findNextXref(to: signature_mismatch_str, optimization: .noBranches) else {
+            return nil
+        }
+
+        var ptrauth_utils_auth_blob_generic_func_start: UInt64!
+        for i in 1..<300 {
+            let pos = ptrauth_utils_auth_blob_generic_func - UInt64(i * 4)
+            if AArch64Instr.isPacibsp(textExec.instruction(at: pos) ?? 0) {
+                ptrauth_utils_auth_blob_generic_func_start = pos
+                break
+            }
+        }
+
+        var ptrauth_utils_sign_blob_generic: UInt64!
+        for i in 1..<20 {
+            let pc = ptrauth_utils_auth_blob_generic_func_start + UInt64(i * 4)
+            let target = AArch64Instr.Emulate.bl(textExec.instruction(at: pc) ?? 0, pc: pc)
+            if target != nil {
+                ptrauth_utils_sign_blob_generic = target
+                break
+            }
+        }
+        
+        return ptrauth_utils_sign_blob_generic
+    }()
+
     /// Address of the `ml_sign_thread_state` function
     public lazy var ml_sign_thread_state: UInt64? = {
         return textExec.addrOf([0x9AC03021, 0x9262F842, 0x9AC13041, 0x9AC13061, 0x9AC13081, 0x9AC130A1, 0xF9009401, 0xD65F03C0])
