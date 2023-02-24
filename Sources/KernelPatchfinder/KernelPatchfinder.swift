@@ -196,6 +196,34 @@ open class KernelPatchfinder {
         
         return pmap_enter_options_addr
     }()
+
+    /// Address of `cs_allow_invalid`
+    public lazy var cs_allow_invalid: UInt64? = {
+        guard let pmap_cs_allow_invalid_ppl = pplDispatchFunc(forOperation: 0x51) else {
+            return nil
+        }
+
+        var candidate = textExec.findNextXref(to: pmap_cs_allow_invalid_ppl, optimization: .onlyBranches)
+        var cs_allow_invalid_addr: UInt64!
+        while candidate != nil {
+
+            let inst = textExec.instruction(at: candidate!) ?? 0
+            if (inst & 0x80000000) != 0 { // only BL to pmap_cs_allow_invalid_ppl is in cs_allow_invalid
+                while true {
+                    // find function start
+                    if AArch64Instr.isPacibsp(textExec.instruction(at: candidate!) ?? 0) {
+                        return candidate!
+                    }
+                    
+                    candidate! -= 4
+                }
+            }
+
+            candidate = textExec.findNextXref(to: pmap_cs_allow_invalid_ppl, startAt: candidate! + 4, optimization: .onlyBranches)
+        }
+        
+        return nil
+    }()
     
     /// Address of the signed part of the `hw_lck_ticket_reserve_orig_allow_invalid` function
     public lazy var hw_lck_ticket_reserve_orig_allow_invalid_signed: UInt64? = {
