@@ -32,6 +32,9 @@ open class KernelPatchfinder {
     
     /// `__TEXT,__cstring` section
     public let cStrSect: PatchfinderSegment
+
+    /// `__TEXT,__oslog` section
+    public let osLogSect: PatchfinderSegment
     
     /// `__DATA,__data` section
     public let dataSect: PatchfinderSegment
@@ -604,6 +607,43 @@ open class KernelPatchfinder {
         return ptrauth_utils_sign_blob_generic
     }()
 
+    /// Address of the `mac_label_set` function
+    public lazy var mac_label_set: UInt64? = {
+        guard let sandbox_failed_revoke_str = osLogSect.addrOf("Sandbox failed to revoke host port (%d) for pid %d") else {
+            return nil
+        }
+
+        guard var proc_apply_sandbox_func = textExec.findNextXref(to: sandbox_failed_revoke_str, optimization: .noBranches) else {
+            return nil
+        }
+
+        var proc_apply_sandbox_func_start: UInt64!
+        for i in 1..<500 {
+            let pos = proc_apply_sandbox_func - UInt64(i * 4)
+            if AArch64Instr.isPacibsp(textExec.instruction(at: pos) ?? 0, alsoAllowNop:false) {
+                proc_apply_sandbox_func_start = pos
+                break
+            }
+        }
+
+        var mac_label_set: UInt64!
+        var blFoundCount: UInt64! = 0
+        for i in 1..<30 {
+            let pc = proc_apply_sandbox_func_start + UInt64(i * 4)
+            let target = AArch64Instr.Emulate.bl(textExec.instruction(at: pc) ?? 0, pc: pc)
+            if target != nil {
+                blFoundCount += 1
+                if blFoundCount == 2 {
+                    // second bl in proc_apply_sandbox is call to mac_label_set
+                    mac_label_set = target
+                    break
+                }
+            }
+        }
+
+        return mac_label_set
+    }()
+
     /// Address of the `ml_sign_thread_state` function
     public lazy var ml_sign_thread_state: UInt64? = {
         return textExec.addrOf([0x9AC03021, 0x9262F842, 0x9AC13041, 0x9AC13061, 0x9AC13081, 0x9AC130A1, 0xF9009401, 0xD65F03C0])
@@ -880,6 +920,10 @@ open class KernelPatchfinder {
         guard let cStrSect = kernel.pfSection(segment: "__TEXT", section: "__cstring") else {
             return nil
         }
+
+        guard let osLogSect = kernel.pfSection(segment: "__TEXT", section: "__os_log") else {
+            return nil
+        }
         
         guard let dataSect = kernel.pfSection(segment: "__DATA", section: "__data") else {
             return nil
@@ -895,6 +939,7 @@ open class KernelPatchfinder {
         
         self.textExec  = textExec
         self.cStrSect  = cStrSect
+        self.osLogSect = osLogSect
         self.dataSect  = dataSect
         self.constSect = constSect
         self.pplText   = pplText
