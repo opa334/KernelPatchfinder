@@ -562,12 +562,18 @@ open class KernelPatchfinder {
         }
         
         var kfree_data_external: UInt64!
-        for i in 2..<20 {  // start at 2: right after xref is bl to printf, skip it
+        var blFoundCount: UInt64! = 0
+
+        for i in 1..<20 {
             let pc = amfi_fatal_err_func_string_xref + UInt64(i * 4)
             let target = AArch64Instr.Emulate.bl(textExec.instruction(at: pc) ?? 0, pc: pc)
             if target != nil {
-                kfree_data_external = target
-                break
+                blFoundCount += 1
+                // Second bl after the xref is kfree_data_external
+                if blFoundCount == 2 {
+                    kfree_data_external = target
+                    break
+                }
             }
         }
         
