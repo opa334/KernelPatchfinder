@@ -650,6 +650,154 @@ open class KernelPatchfinder {
         return mac_label_set
     }()
 
+    /*public lazy var OSEntitlements_zone: UInt64? = {
+        guard let OSEntitlementsString = cStrSect.addrOf("OSEntitlements") else {
+            return nil
+        }
+
+        guard var OSEntitlementsZoneInitMid = textExec.findNextXref(to: OSEntitlementsString, optimization: .noBranches) else {
+            return nil
+        }
+
+        for i in 1..<10 {
+            let pc = OSEntitlementsZoneInitMid + UInt64(i * 4)
+            let instr = textExec.instruction(at: pc) ?? 0
+            if (instr & 0x00000004) != 0 /*???? (adrp) x4, ????*/ {
+                return AArch64Instr.Emulate.adrpAdd(adrp: instr, add: textExec.instruction(at: pc+4) ?? 0, pc: pc)
+            }
+        }
+        return nil
+    }()
+
+    public lazy var OSEntitlements_Destructor: UInt64? = {
+        guard let OSEntitlements_zone = self.OSEntitlements_zone else {
+            return nil
+        }
+
+        var pc: UInt64?
+        while true {
+            pc = textExec.findNextXref(to: OSEntitlements_zone, startAt: pc, optimization: .noBranches)
+            if pc == nil {
+                break
+            }
+
+            let isAlloc = (textExec.instruction(at: pc!-4) ?? 0 == 0xAA0003E8) /* mov x8, x0 */
+            if !isAlloc {
+                for i in 1..<20 {
+                    let pos = pc! - UInt64(i * 4)
+                    if AArch64Instr.isPacibsp(textExec.instruction(at: pos) ?? 0, alsoAllowNop:false) {
+                        return pos
+                    }
+                }
+            }
+
+            pc = pc! + 4
+        }
+
+        return nil
+    }()
+
+    public lazy var OSEntitlements_MetaClass_alloc: UInt64? = {
+        guard let OSEntitlements_zone = self.OSEntitlements_zone else {
+            return nil
+        }
+
+        var pc: UInt64?
+        while true {
+            // Problem: Patchfinder is not able to find ADRP, LDR xrefs
+            pc = textExec.findNextXref(to: OSEntitlements_zone, startAt: pc, optimization: .noBranches)
+            
+            if pc == nil {
+                break
+            }
+
+            let isAlloc = (textExec.instruction(at: pc!-4) ?? 0 == 0xAA0003E8) /* mov x8, x0 */
+            if isAlloc {
+                for i in 1..<20 {
+                    let pos = pc! - UInt64(i * 4)
+                    if AArch64Instr.isPacibsp(textExec.instruction(at: pos) ?? 0, alsoAllowNop:false) {
+                        return pos
+                    }
+                }
+            }
+
+            pc = pc! + 4
+        }
+
+        return nil
+    }()*/
+
+    /// Address of the `kernel_mount` function
+    public lazy var kernel_mount: UInt64? = {
+        
+        // there are 3 references to this string in some function
+        // we want the last one
+        guard let basesystem_str = cStrSect.addrOf("/System/Volumes/BaseSystem") else {
+            return nil
+        }
+
+        var last_xref: UInt64! = 0
+        var spc: UInt64?
+        for i in 1..<20 {
+            spc = textExec.findNextXref(to: basesystem_str, startAt:spc, optimization: .noBranches)
+            if (spc == nil) {
+                break
+            }
+            last_xref = spc!
+            spc! += 4
+        }
+
+        var kernel_mount: UInt64?
+
+        // last BL before last xref is call to kernel_mount
+        for i in 1..<20 {
+            let pc = last_xref - UInt64(4 * i)
+            let target = AArch64Instr.Emulate.bl(textExec.instruction(at: pc) ?? 0, pc: pc)
+            if target != nil {
+                kernel_mount = target
+                break
+            }
+        }
+
+        return kernel_mount
+    }()
+
+    public lazy var kerncontext: UInt64? = {
+        
+        // there are 3 references to this string in some function
+        // we want the last one
+        guard let basesystem_str = cStrSect.addrOf("/System/Volumes/BaseSystem") else {
+            return nil
+        }
+
+        var last_xref: UInt64! = 0
+        var spc: UInt64?
+        for i in 1..<20 {
+            spc = textExec.findNextXref(to: basesystem_str, startAt:spc, optimization: .noBranches)
+            if (spc == nil) {
+                break
+            }
+            last_xref = spc!
+            spc! += 4
+        }
+
+        var kerncontext: UInt64?
+
+        // next ADRL after last xref is kerncontext
+        for i in 1..<5 {
+            let pc = last_xref + UInt64(4 * i)
+            let adrp = textExec.instruction(at: pc) ?? 0
+            let ldr  = textExec.instruction(at: pc + 4) ?? 0
+            let target = AArch64Instr.Emulate.adrpAdd(adrp: adrp, add: ldr, pc: pc ?? 0)
+            if target != nil {
+                kerncontext = target
+                break
+            }
+        }
+
+        return kerncontext
+    }()
+
     /// Address of the `ml_sign_thread_state` function
     public lazy var ml_sign_thread_state: UInt64? = {
         return textExec.addrOf([0x9AC03021, 0x9262F842, 0x9AC13041, 0x9AC13061, 0x9AC13081, 0x9AC130A1, 0xF9009401, 0xD65F03C0])
