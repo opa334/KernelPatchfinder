@@ -788,7 +788,7 @@ open class KernelPatchfinder {
             let pc = last_xref + UInt64(4 * i)
             let adrp = textExec.instruction(at: pc) ?? 0
             let ldr  = textExec.instruction(at: pc + 4) ?? 0
-            let target = AArch64Instr.Emulate.adrpAdd(adrp: adrp, add: ldr, pc: pc ?? 0)
+            let target = AArch64Instr.Emulate.adrpAdd(adrp: adrp, add: ldr, pc: pc)
             if target != nil {
                 kerncontext = target
                 break
@@ -942,37 +942,87 @@ open class KernelPatchfinder {
     
     /// Offset of `ITK_SPACE` in task struct
     public lazy var ITK_SPACE: UInt64? = {
-        guard let task_dealloc_str = cStrSect.addrOf("task_deallocate(%p): volatile_objects=%d nonvolatile_objects=%d") else {
+        guard let corpse_released_str = osLogSect.addrOf("Corpse released, count at %d\n") else {
             return nil
         }
-        
-        guard var task_deallocate_internal = textExec.findNextXref(to: task_dealloc_str, optimization: .noBranches) else {
-            return nil
-        }
-        
-        var pc = task_deallocate_internal
-        while true {
-            guard let candidate = textExec.findNextXref(to: pc, optimization: .onlyBranches) else {
-                pc = pc - 4
-                continue
+
+        // find middle of task_crashinfo_release_ref
+        var pc: UInt64! = nil
+        var task_crashinfo_release_ref_mid = UInt64(0)
+        while task_crashinfo_release_ref_mid == 0 {
+            guard let candidate = textExec.findNextXref(to: corpse_released_str, startAt: pc, optimization: .noBranches) else {
+                return nil
             }
-            
-            // Scan downward for a bl
-            pc = candidate
-            while true {
-                pc += 4
-                if let args = AArch64Instr.Emulate.bl(textExec.instruction(at: pc) ?? 0, pc: pc) {
+
+            for i in 1..<20 {
+                if textExec.instruction(at: candidate + UInt64(4*i)) == 0x52800000 {
+                    task_crashinfo_release_ref_mid = candidate
                     break
                 }
             }
-            
-            // Scan for our ldr
-            while true {
-                pc += 4
-                if let args = AArch64Instr.Args.ldr(textExec.instruction(at: pc) ?? 0) {
-                    return UInt64(args.imm)
+
+            pc = candidate + 4
+        }
+
+        // find function start of task_crashinfo_release_ref
+        var task_crashinfo_release_ref = task_crashinfo_release_ref_mid
+        while true {
+            if AArch64Instr.isPacibsp(textExec.instruction(at: task_crashinfo_release_ref) ?? 0, alsoAllowNop: false) {
+                break
+            }
+            task_crashinfo_release_ref -= 4
+        }
+
+        // scan all xrefs of that until we find one that has "MOV W1, 0x4000" in the 20 instructions before it
+        var task_collect_crash_info_mid = UInt64(0)
+        pc = nil
+        while task_collect_crash_info_mid == 0 {
+            guard let candidate = textExec.findNextXref(to: task_crashinfo_release_ref, startAt: pc) else {
+                return nil
+            }
+
+            for i in 1..<20 {
+                if textExec.instruction(at: candidate - UInt64(4*i)) == 0x52880001 {
+                    task_collect_crash_info_mid = candidate
+                    break
                 }
             }
+
+            pc = candidate + 4
+        }
+
+        // find function start of that xref
+        var task_collect_crash_info = task_collect_crash_info_mid
+        while true {
+            if AArch64Instr.isPacibsp(textExec.instruction(at: task_collect_crash_info) ?? 0) {
+                break
+            }
+            task_collect_crash_info -= 4
+        }
+
+        // scan for xrefs of that until we find one that has a "MOV W2, #1" directly in front of it
+        var before_add = UInt64(0)
+        pc = nil
+        while true {
+            guard let candidate = textExec.findNextXref(to: task_collect_crash_info, startAt: pc) else {
+                return nil
+            }
+
+            if textExec.instruction(at: candidate - UInt64(4)) == 0x52800022 {
+                before_add = candidate
+                break
+            }
+
+            pc = candidate + 4
+        }
+
+        // go down until the next ADD instruction, the immediate of that is our offset
+        pc = before_add
+        while true {
+            if let args = AArch64Instr.Args.addImm(textExec.instruction(at: pc) ?? 0) {
+                return UInt64(args.imm)
+            }
+            pc = pc + 4
         }
     }()
     
