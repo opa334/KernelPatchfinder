@@ -802,6 +802,35 @@ open class KernelPatchfinder {
     public lazy var ml_sign_thread_state: UInt64? = {
         return textExec.addrOf([0x9AC03021, 0x9262F842, 0x9AC13041, 0x9AC13061, 0x9AC13081, 0x9AC130A1, 0xF9009401, 0xD65F03C0])
     }()
+
+    // Address of the `proc_find` function
+    public lazy var proc_find: UInt64? = {
+        // all functions that reference this string call proc_find at the top
+        guard let entitlement_str = cStrSect.addrOf("com.apple.private.process.suspend-resume.any") else {
+            return nil
+        }
+
+        guard let ref: UInt64? = textExec.findNextXref(to: entitlement_str, startAt:nil, optimization: .noBranches) else {
+            return nil
+        }
+
+        var funcStart = ref!
+        while !AArch64Instr.isPacibsp(textExec.instruction(at: funcStart) ?? 0) {
+            funcStart -= 4
+        }
+
+        var proc_find: UInt64!
+        for i in 1..<50 {
+            let pc = funcStart + UInt64(i * 4)
+            let target = AArch64Instr.Emulate.bl(textExec.instruction(at: pc) ?? 0, pc: pc)
+            if target != nil {
+                proc_find = target
+                break
+            }
+        }
+
+        return proc_find
+    }()
     
     /// Address of the ppl handler table
     public lazy var ppl_handler_table: UInt64? = {
