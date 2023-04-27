@@ -798,6 +798,56 @@ open class KernelPatchfinder {
         return kerncontext
     }()
 
+    /*public lazy var safedounmount: UInt64? = {
+        guard let entitlement_str = cStrSect.addrOf("com.apple.private.vfs.role-account-unmount") else {
+            return nil
+        }
+
+        guard let ref: UInt64? = textExec.findNextXref(to: entitlement_str, startAt:nil, optimization: .noBranches) else {
+            return nil
+        }
+
+        var safedounmount = ref!
+        while !AArch64Instr.isPacibsp(textExec.instruction(at: safedounmountStart) ?? 0) {
+            safedounmount -= 4
+        }
+
+        return safedounmount
+
+//        var prevCandidate: UInt64? = nil
+//        while true {
+//            var candidate: UInt64! = textExec.findNextXref(to: safedounmountStart, startAt:prevCandidate, optimization: .onlyBranches)
+//            if candidate == nil {
+//                return nil
+//            }
+//            var concurrentSTPs: UInt64! = 0
+//            for i in 1..<120 {
+//                var curPos = candidate - UInt64(i * 4)
+//                let instr = textExec.instruction(at: curPos) ?? 0
+//                if AArch64Instr.isPacibsp(instr, alsoAllowNop: false) {
+//                    concurrentSTPs = 0
+//                    break
+//                }
+//                if (instr & 0x0000FFFF) == 0x000083E0 {
+//                    concurrentSTPs += 1
+//                    if concurrentSTPs == 10 {
+//                        for k in 1..<30 {
+//                            curPos -= 4
+//                            if AArch64Instr.isPacibsp(textExec.instruction(at: curPos) ?? 0, alsoAllowNop: false) {
+//                                return curPos
+//                            }
+//                        }
+//                        return nil
+//                    }
+//                }
+//            }
+
+            prevCandidate = candidate + 4
+        }
+        
+        return nil
+    }()*/
+
     /// Address of the `ml_sign_thread_state` function
     public lazy var ml_sign_thread_state: UInt64? = {
         return textExec.addrOf([0x9AC03021, 0x9262F842, 0x9AC13041, 0x9AC13061, 0x9AC13081, 0x9AC130A1, 0xF9009401, 0xD65F03C0])
