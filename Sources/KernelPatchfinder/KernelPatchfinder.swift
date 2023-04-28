@@ -315,6 +315,11 @@ open class KernelPatchfinder {
     public lazy var str_x8_x9_gadget: UInt64? = {
         return textExec.addrOf([0xF9000128, 0xD65F03C0])
     }()
+
+    /// Address of a `cmp x1, #0; pacda x1, x9; str x9, [x8]; csel x9, xzr, x1, eq; ret` gadget
+    public lazy var pacda_gadget: UInt64? = {
+        return textExec.addrOf([0xF100003F, 0xDAC10921, 0x9A8103E9, 0xF9000109, 0xD65F03C0])
+    }()
     
     /// Address of a `str x0, [x19]; ldr x?, [x20, #?]` gadget
     public lazy var str_x0_x19_ldr_x20: UInt64? = {
@@ -762,6 +767,22 @@ open class KernelPatchfinder {
         return kernel_mount
     }()
 
+    public lazy var mount_common: UInt64? = {
+        guard let panic_str = cStrSect.addrOf("mount_common(): mount of %s filesystem failed with %d, but vnode list is not empty. @%s:%d") else {
+            return nil
+        }
+
+        guard let ref: UInt64? = textExec.findNextXref(to: panic_str, startAt:nil, optimization: .noBranches) else {
+            return nil
+        }
+
+        var mount_common = ref!
+        while !AArch64Instr.isPacibsp(textExec.instruction(at: mount_common) ?? 0) {
+            mount_common -= 4
+        }
+        return mount_common
+    }()
+
     public lazy var kerncontext: UInt64? = {
         
         // there are 3 references to this string in some function
@@ -798,55 +819,76 @@ open class KernelPatchfinder {
         return kerncontext
     }()
 
-    /*public lazy var safedounmount: UInt64? = {
+    public lazy var safedounmount: UInt64? = {
         guard let entitlement_str = cStrSect.addrOf("com.apple.private.vfs.role-account-unmount") else {
             return nil
         }
 
-        guard let ref: UInt64? = textExec.findNextXref(to: entitlement_str, startAt:nil, optimization: .noBranches) else {
+        guard let ref: UInt64 = textExec.findNextXref(to: entitlement_str, startAt:nil, optimization: .noBranches) else {
             return nil
         }
 
-        var safedounmount = ref!
-        while !AArch64Instr.isPacibsp(textExec.instruction(at: safedounmountStart) ?? 0) {
+        var safedounmount = ref
+        while !AArch64Instr.isPacibsp(textExec.instruction(at: safedounmount) ?? 0, alsoAllowNop: false) {
             safedounmount -= 4
         }
 
         return safedounmount
+    }()
 
-//        var prevCandidate: UInt64? = nil
-//        while true {
-//            var candidate: UInt64! = textExec.findNextXref(to: safedounmountStart, startAt:prevCandidate, optimization: .onlyBranches)
-//            if candidate == nil {
-//                return nil
-//            }
-//            var concurrentSTPs: UInt64! = 0
-//            for i in 1..<120 {
-//                var curPos = candidate - UInt64(i * 4)
-//                let instr = textExec.instruction(at: curPos) ?? 0
-//                if AArch64Instr.isPacibsp(instr, alsoAllowNop: false) {
-//                    concurrentSTPs = 0
-//                    break
-//                }
-//                if (instr & 0x0000FFFF) == 0x000083E0 {
-//                    concurrentSTPs += 1
-//                    if concurrentSTPs == 10 {
-//                        for k in 1..<30 {
-//                            curPos -= 4
-//                            if AArch64Instr.isPacibsp(textExec.instruction(at: curPos) ?? 0, alsoAllowNop: false) {
-//                                return curPos
-//                            }
-//                        }
-//                        return nil
-//                    }
-//                }
-//            }
-
-            prevCandidate = candidate + 4
+    public lazy var namei: UInt64? = {
+        guard let str = cStrSect.addrOf("We need to keep going on a continued lookup, but for vp type %d (tag %d) @%s:%d") else {
+            return nil
         }
-        
-        return nil
-    }()*/
+
+        guard let ref: UInt64 = textExec.findNextXref(to: str, startAt:nil, optimization: .noBranches) else {
+            return nil
+        }
+
+        var namei = ref
+        while !AArch64Instr.isPacibsp(textExec.instruction(at: namei) ?? 0, alsoAllowNop: false) {
+            namei -= 4
+        }
+        return namei
+    }()
+
+    public lazy var vfs_context_current: UInt64? = {
+        // Only exists on iOS 15.2 and up
+        if #available(iOS 15.2, *) {}
+        else { return nil }
+
+        guard let mount_common_addr = mount_common else {
+            return nil
+        }
+
+        guard let kernel_mount_addr = kernel_mount else {
+            return nil
+        }
+
+        var pc: UInt64? = nil
+        while true {
+            guard var candidate = textExec.findNextXref(to: mount_common_addr, startAt: pc, optimization: .onlyBranches) else {
+                return nil
+            }
+
+            var candidateStart = candidate
+            while !AArch64Instr.isPacibsp(textExec.instruction(at: candidateStart) ?? 0) {
+                candidateStart -= 4
+            }
+            
+            if candidateStart != kernel_mount_addr {
+                for i in 1..<20 {
+                    let checkStart = candidateStart + UInt64(i * 4)
+                    let target = AArch64Instr.Emulate.bl(textExec.instruction(at: checkStart) ?? 0, pc: checkStart)
+                    if target != nil {
+                        return target
+                    }
+                }
+            }
+            
+            pc = candidate + 4
+        }
+    }()
 
     /// Address of the `ml_sign_thread_state` function
     public lazy var ml_sign_thread_state: UInt64? = {
@@ -889,11 +931,11 @@ open class KernelPatchfinder {
             return nil
         }
 
-        guard let ref: UInt64? = textExec.findNextXref(to: entitlement_str, startAt:nil, optimization: .noBranches) else {
+        guard let ref: UInt64 = textExec.findNextXref(to: entitlement_str, startAt:nil, optimization: .noBranches) else {
             return nil
         }
 
-        var funcEnd = ref!
+        var funcEnd = ref
         while (textExec.instruction(at: funcEnd) ?? 0) != 0xD65F0FFF {
             funcEnd += 4
         }
