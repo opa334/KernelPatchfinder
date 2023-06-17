@@ -772,11 +772,11 @@ open class KernelPatchfinder {
             return nil
         }
 
-        guard let ref: UInt64? = textExec.findNextXref(to: panic_str, startAt:nil, optimization: .noBranches) else {
+        guard let ref: UInt64 = textExec.findNextXref(to: panic_str, startAt:nil, optimization: .noBranches) else {
             return nil
         }
 
-        var mount_common = ref!
+        var mount_common = ref
         while !AArch64Instr.isPacibsp(textExec.instruction(at: mount_common) ?? 0) {
             mount_common -= 4
         }
@@ -902,11 +902,11 @@ open class KernelPatchfinder {
             return nil
         }
 
-        guard let ref: UInt64? = textExec.findNextXref(to: entitlement_str, startAt:nil, optimization: .noBranches) else {
+        guard let ref: UInt64 = textExec.findNextXref(to: entitlement_str, startAt:nil, optimization: .noBranches) else {
             return nil
         }
 
-        var funcStart = ref!
+        var funcStart = ref
         while !AArch64Instr.isPacibsp(textExec.instruction(at: funcStart) ?? 0) {
             funcStart -= 4
         }
@@ -1005,6 +1005,53 @@ open class KernelPatchfinder {
         }
         
         return pmap_image4_trust_caches
+    }()
+
+    // Offset of gVirtBase global variable
+    public lazy var gVirtBase: UInt64? = {
+        guard let hint_str = cStrSect.addrOf("use_contiguous_hint") else {
+            return nil
+        }
+
+        guard let arm_vm_init_mid: UInt64 = textExec.findNextXref(to: hint_str, startAt:nil, optimization: .noBranches) else {
+            return nil
+        }
+
+        var arm_vm_init = arm_vm_init_mid
+        while !AArch64Instr.isPacibsp(textExec.instruction(at: arm_vm_init) ?? 0, alsoAllowNop: false) {
+            arm_vm_init -= 4
+        }
+
+        var gVirtBase: UInt64? = nil
+        var matches = 0
+        for i in 1..<30 {
+            let pc = arm_vm_init + UInt64(i * 4)
+            let candidate = AArch64Instr.Emulate.adrp(textExec.instruction(at: pc) ?? 0, pc: pc)
+            if candidate != nil {
+                matches += 1
+                if matches == 2 {
+                    guard let strArgs = AArch64Instr.Args.str(textExec.instruction(at: pc+4) ?? 0) else {
+                        continue
+                    }
+                    gVirtBase = candidate! + UInt64(strArgs.imm)
+                }
+            }
+        }
+        return gVirtBase
+    }()
+
+    public lazy var gPhysBase: UInt64? = {
+        guard let gVirtBase = self.gVirtBase else {
+            return nil
+        }
+        return gVirtBase - 0x10
+    }()
+
+    public lazy var gPhysSize: UInt64? = {
+        guard let gVirtBase = self.gVirtBase else {
+            return nil
+        }
+        return gVirtBase + 0x8
     }()
     
     /// Get the EL level the kernel runs at
