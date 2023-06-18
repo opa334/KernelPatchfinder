@@ -1007,8 +1007,8 @@ open class KernelPatchfinder {
         return pmap_image4_trust_caches
     }()
 
-    // Offset of gVirtBase global variable
-    public lazy var gVirtBase: UInt64? = {
+    // Offset of gPhysBase global variable
+    public lazy var gPhysBase: UInt64? = {
         guard let hint_str = cStrSect.addrOf("use_contiguous_hint") else {
             return nil
         }
@@ -1022,36 +1022,69 @@ open class KernelPatchfinder {
             arm_vm_init -= 4
         }
 
-        var gVirtBase: UInt64? = nil
+        var gPhysBase: UInt64? = nil
         var matches = 0
-        for i in 1..<30 {
+        for i in 1..<50 {
             let pc = arm_vm_init + UInt64(i * 4)
-            let candidate = AArch64Instr.Emulate.adrp(textExec.instruction(at: pc) ?? 0, pc: pc)
-            if candidate != nil {
-                matches += 1
-                if matches == 2 {
-                    guard let strArgs = AArch64Instr.Args.str(textExec.instruction(at: pc+4) ?? 0) else {
+
+            guard let strArgs = AArch64Instr.Args.str(textExec.instruction(at: pc) ?? 0) else {
+                continue
+            }
+
+            matches += 1
+            if matches == 2 {
+                for k in 1..<10 {
+                    let pc2 = pc - UInt64(k * 4)
+                    guard let page = AArch64Instr.Emulate.adrp(textExec.instruction(at: pc2) ?? 0, pc: pc2) else {
                         continue
                     }
-                    gVirtBase = candidate! + UInt64(strArgs.imm)
+                    gPhysBase = page + UInt64(strArgs.imm)
+                    break
                 }
+                break
             }
         }
-        return gVirtBase
+        return gPhysBase
     }()
 
-    public lazy var gPhysBase: UInt64? = {
-        guard let gVirtBase = self.gVirtBase else {
-            return nil
-        }
-        return gVirtBase - 0x10
-    }()
-
+    // Offset of gPhysSize global variable
     public lazy var gPhysSize: UInt64? = {
-        guard let gVirtBase = self.gVirtBase else {
+        guard let hint_str = cStrSect.addrOf("use_contiguous_hint") else {
             return nil
         }
-        return gVirtBase + 0x8
+
+        guard let arm_vm_init_mid: UInt64 = textExec.findNextXref(to: hint_str, startAt:nil, optimization: .noBranches) else {
+            return nil
+        }
+
+        var arm_vm_init = arm_vm_init_mid
+        while !AArch64Instr.isPacibsp(textExec.instruction(at: arm_vm_init) ?? 0, alsoAllowNop: false) {
+            arm_vm_init -= 4
+        }
+
+        var gPhysSize: UInt64? = nil
+        var matches = 0
+        for i in 1..<50 {
+            let pc = arm_vm_init + UInt64(i * 4)
+
+            guard let strArgs = AArch64Instr.Args.str(textExec.instruction(at: pc) ?? 0) else {
+                continue
+            }
+
+            matches += 1
+            if matches == 5 {
+                for k in 1..<10 {
+                    let pc2 = pc - UInt64(k * 4)
+                    guard let page = AArch64Instr.Emulate.adrp(textExec.instruction(at: pc2) ?? 0, pc: pc2) else {
+                        continue
+                    }
+                    gPhysSize = page + UInt64(strArgs.imm)
+                    break
+                }
+                break
+            }
+        }
+        return gPhysSize
     }()
     
     /// Get the EL level the kernel runs at
