@@ -170,7 +170,32 @@ open class KernelPatchfinder {
         
         return nil
     }()
-    
+
+    /// Address of the `pmap_data_bootstrap` function
+    public lazy var pmap_data_bootstrap: UInt64? = {
+        guard let pmap_asid_plru_str = cStrSect.addrOf("pmap_asid_plru") else {
+            return nil
+        }
+
+        guard let pmap_bootstrap_mid = textExec.findNextXref(to: pmap_asid_plru_str, optimization: .noBranches) else {
+            return nil
+        }
+
+        var bli: UInt64 = 0
+        var pc = pmap_bootstrap_mid
+        for i in 1..<30 {
+            let target = AArch64Instr.Emulate.bl(textExec.instruction(at: pc) ?? 0, pc: pc)
+            if target != nil {
+                bli += 1
+                if bli == 2 {
+                    return target
+                }
+            }
+        }
+
+        return nil
+    }()
+
     /// Address of the `pmap_enter_options_addr` function
     public lazy var pmap_enter_options_addr: UInt64? = {
         guard let pmap_enter_options_ppl = pplDispatchFunc(forOperation: 0xA) else {
