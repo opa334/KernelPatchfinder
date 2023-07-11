@@ -150,6 +150,26 @@ open class KernelPatchfinder {
         
         return gxf_ppl_enter_start
     }()
+
+    /// Address of the `pmap_destroy` function
+    public lazy var pmap_destroy: UInt64? = {
+        guard let pmap_destroy_ppl = pplDispatchFunc(forOperation: 9) else {
+            return nil
+        }
+        
+        var candidate = textExec.findNextXref(to: pmap_destroy_ppl, optimization: .onlyBranches)
+        while candidate != nil {
+            // Rely on the fact pmap_destroy is the smallest function that calls pmap_destroy_ppl
+            for i in 1..<10 {
+                if AArch64Instr.isPacibsp(textExec.instruction(at: candidate! - UInt64(i * 4)) ?? 0) {
+                    return candidate! - UInt64(i * 4)
+                }
+            }
+            candidate = textExec.findNextXref(to: pmap_destroy_ppl, startAt: candidate! + 4, optimization: .onlyBranches)
+        }
+        
+        return nil
+    }()
     
     /// Address of the `pmap_enter_options_addr` function
     public lazy var pmap_enter_options_addr: UInt64? = {
