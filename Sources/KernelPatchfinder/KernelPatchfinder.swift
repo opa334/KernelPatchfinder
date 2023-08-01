@@ -1070,6 +1070,37 @@ open class KernelPatchfinder {
         return arm_vm_init
     }()
 
+    // Offset of `gVirtBase` global variable
+    public lazy var gVirtBase: UInt64? = {
+        guard let arm_vm_init_ = arm_vm_init else {
+            return nil
+        }
+
+        var gVirtBase: UInt64? = nil
+        var matches = 0
+        for i in 1..<50 {
+            let pc = arm_vm_init_ + UInt64(i * 4)
+
+            guard let strArgs = AArch64Instr.Args.str(textExec.instruction(at: pc) ?? 0) else {
+                continue
+            }
+
+            matches += 1
+            if matches == 1 {
+                for k in 1..<10 {
+                    let pc2 = pc - UInt64(k * 4)
+                    guard let page = AArch64Instr.Emulate.adrp(textExec.instruction(at: pc2) ?? 0, pc: pc2) else {
+                        continue
+                    }
+                    gVirtBase = page + UInt64(strArgs.imm)
+                    break
+                }
+                break
+            }
+        }
+        return gVirtBase
+    }()
+
     // Offset of `gPhysBase` global variable
     public lazy var gPhysBase: UInt64? = {
         guard let arm_vm_init_ = arm_vm_init else {
@@ -1130,6 +1161,46 @@ open class KernelPatchfinder {
             }
         }
         return gPhysSize
+    }()
+
+    // Offset of `ptov_table` global variable
+    public lazy var ptov_table: UInt64? = {
+        guard let arm_vm_init_ = arm_vm_init else {
+            return nil
+        }
+
+        // First call in arm_vm_init is phystokv
+        var phystokv: UInt64? = nil
+        var k = 0
+        while phystokv == nil {
+            let pc = arm_vm_init_ + UInt64(k * 4)
+            phystokv = AArch64Instr.Emulate.bl(textExec.instruction(at: pc) ?? 0, pc: pc)
+            k += 1
+        }
+
+        // Second (adrp, ldr) in phystokv is ptov_table
+        var ptov_table: UInt64? = nil
+        var matches = 0
+        for i in 1..<50 {
+            let ldrPc = phystokv! + UInt64(i * 4)
+
+            guard let ldrArgs = AArch64Instr.Args.ldr(textExec.instruction(at: ldrPc) ?? 0) else {
+                continue
+            }
+
+            let adrpPc = ldrPc - 4
+            guard let page = AArch64Instr.Emulate.adrp(textExec.instruction(at: adrpPc) ?? 0, pc: adrpPc) else {
+                continue
+            }
+
+            matches += 1
+            if matches == 2 {
+                ptov_table = page + UInt64(ldrArgs.imm)
+                break
+            }
+        }
+
+        return ptov_table
     }()
     
     /// Get the EL level the kernel runs at
